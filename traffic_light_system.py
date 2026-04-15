@@ -66,6 +66,8 @@ class TrafficWorker(QThread):
         self.lr_model = lr_model
         self.rl_model = rl_model
         self.use_rl = use_rl
+        self.emergency_count = 0
+        self.MAX_EMERGENCIES = 2
 
     def run(self):
         try:
@@ -91,10 +93,24 @@ class TrafficWorker(QThread):
                     # Emergency simulation - ambulance arrives every 2nd cycle
                     ambulance_cycle = (cycle_counter % 2 == 1)  # Every 2nd cycle has ambulance
                     
-                    emergency_detected_north = ambulance_cycle and np.random.choice([True, False], p=[0.25, 0.75])
-                    emergency_detected_south = ambulance_cycle and np.random.choice([True, False], p=[0.25, 0.75])
-                    emergency_detected_east = ambulance_cycle and np.random.choice([True, False], p=[0.25, 0.75])
-                    emergency_detected_west = ambulance_cycle and np.random.choice([True, False], p=[0.25, 0.75])
+                    emergency_detected_north = False
+                    emergency_detected_south = False
+                    emergency_detected_east = False
+                    emergency_detected_west = False
+                    
+                    if self.emergency_count < self.MAX_EMERGENCIES and ambulance_cycle:
+                        # Only generate emergency if under limit
+                        emergency_dir = np.random.choice(['North', 'South', 'East', 'West'])
+                        if emergency_dir == 'North':
+                            emergency_detected_north = True
+                        elif emergency_dir == 'South':
+                            emergency_detected_south = True
+                        elif emergency_dir == 'East':
+                            emergency_detected_east = True
+                        else:
+                            emergency_detected_west = True
+                        self.emergency_count += 1
+                        print(f"Emergency #{self.emergency_count} triggered in pre-cycle: {emergency_dir}")
 
                     vehicle_counts_dict = {
                         'North': vehicle_count_north,
@@ -159,7 +175,7 @@ class TrafficWorker(QThread):
                         emergency_dir = None
                         
                         # Random chance to detect emergency during cycle
-                        if np.random.random() < 0.05:  # 5% chance per second
+                        if self.emergency_count < self.MAX_EMERGENCIES and np.random.random() < 0.05:  # 5% chance per second
                             # Check which direction has emergency
                             for dir in ['North', 'South', 'East', 'West']:
                                 if emergency_dict.get(dir, False):
@@ -205,9 +221,26 @@ class TrafficWorker(QThread):
                                 self.update_timings_signal.emit(timings)
                                 time.sleep(1)
                             
-                            print(f"Emergency vehicle passed - returning to NORMAL operation")
+                            # Orange phase for emergency direction - 5 seconds
+                            print("Emergency green complete - Orange phase for 5s")
+                            for sec in range(5, 0, -1):
+                                lights = {}
+                                timings = {}
+                                for dir in ['North', 'South', 'East', 'West']:
+                                    if dir == emergency_dir:
+                                        lights[dir] = "🟡"
+                                        timings[dir] = f"{sec}s"
+                                    else:
+                                        lights[dir] = "🔴"
+                                        timings[dir] = "0s"
+                                self.update_lights_signal.emit(lights)
+                                self.update_timings_signal.emit(timings)
+                                time.sleep(1)
                             
-                            # IMMEDIATELY return to normal - no yellow phase
+                            print(f"Emergency vehicle passed - returning to NORMAL operation")
+                            if self.emergency_count >= self.MAX_EMERGENCIES:
+                                print("Max emergencies (2) reached. No more emergencies will occur.")
+                            
                             # Brief all red for safety then next cycle
                             lights = {}
                             timings = {}
